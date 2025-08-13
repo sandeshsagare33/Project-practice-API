@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Art Institute of Chicago — Search</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+  <style>
+    body { background:#f8f9fa; padding-top: 1.5rem; }
+    .brand { font-weight:700; }
+    .art-card img { height: 230px; object-fit: cover; background:#e9ecef; }
+    .spinner { display:none; }
+    .pagination-wrap { gap:.5rem }
+  </style>
+</head>
+<body>
+
+<div class="container">
+  <h1 class="text-center mb-4 brand">🎨 Art Institute of Chicago</h1>
+
+  <!-- Controls -->
+  <div class="row g-2 align-items-center mb-3">
+    <div class="col-sm-7 col-md-6 col-lg-5">
+      <input type="text" id="txtSearch" class="form-control" placeholder="Search artworks (e.g. lion, Monet, cat)">
+    </div>
+    <div class="col-auto">
+      <button id="btnSearch" class="btn btn-primary">Search</button>
+    </div>
+    <div class="col-auto spinner" id="loading">
+      <div class="spinner-border" role="status" aria-hidden="true"></div>
+    </div>
+  </div>
+
+  <!-- Results -->
+  <div id="artContainer" class="row g-3"></div>
+
+  <!-- Pagination -->
+  <div class="d-flex justify-content-center mt-4 pagination-wrap">
+    <button id="btnPrev" class="btn btn-outline-secondary" disabled>Prev</button>
+    <span id="pageInfo" class="align-self-center small text-muted"></span>
+    <button id="btnNext" class="btn btn-outline-secondary" disabled>Next</button>
+  </div>
+</div>
+
+<!-- Bootstrap JS -->
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+
+<script>
+const API_BASE = "https://api.artic.edu/api/v1";
+let lastQuery = "lion";
+let currentPage = 1;
+const limit = 12; // results per page
+let lastTotalPages = 1;
+let lastIiifBase = "https://www.artic.edu/iiif/2";
+
+function setLoading(on) {
+  $("#loading").css("display", on ? "inline-block" : "none");
+}
+
+function updatePagination(pagination) {
+  if (!pagination) {
+    $("#btnPrev, #btnNext").prop("disabled", true);
+    $("#pageInfo").text("");
+    return;
+  }
+  currentPage = pagination.current_page;
+  lastTotalPages = pagination.total_pages;
+  $("#btnPrev").prop("disabled", currentPage <= 1);
+  $("#btnNext").prop("disabled", currentPage >= lastTotalPages);
+  $("#pageInfo").text(`Page ${pagination.current_page} of ${pagination.total_pages}`);
+}
+
+function placeholderCard(title = "No Image") {
+  return `<img src="https://via.placeholder.com/600x400?text=${encodeURIComponent(title)}" class="card-img-top" alt="${title}">`;
+}
+
+function renderArtworks(details) {
+  const $c = $("#artContainer").empty();
+  if (!details || !details.length) {
+    $c.append(`<div class="col-12 text-center text-danger">No artworks found.</div>`);
+    return;
+  }
+
+  details.forEach(a => {
+    const img = a.image_id
+      ? `<img src="${lastIiifBase}/${a.image_id}/full/600,/0/default.jpg" class="card-img-top" alt="${a.title}">`
+      : placeholderCard(a.title || "Artwork");
+
+    $c.append(`
+      <div class="col-sm-6 col-md-4 col-lg-3">
+        <div class="card art-card h-100 shadow-sm">
+          ${img}
+          <div class="card-body">
+            <h6 class="card-title mb-1">${a.title || "Untitled"}</h6>
+            <div class="text-muted small">${a.artist_title || "Unknown Artist"}</div>
+            <button class="btn btn-sm btn-outline-primary mt-2" data-id="${a.id}" onclick="showArtDetails(${a.id})">
+              View Details
+            </button>
+          </div>
+        </div>
+      </div>
+    `);
+  });
+}
+
+function searchArtworks(query, page = 1) {
+  setLoading(true);
+  // 1) Search to get IDs (cheap)
+  const searchUrl = `${API_BASE}/artworks/search?q=${encodeURIComponent(query)}&page=${page}&limit=${limit}&fields=id,title,artist_title`;
+  fetch(searchUrl)
+    .then(r => r.json())
+    .then(s => {
+      updatePagination(s.pagination);
+      lastIiifBase = (s.config && s.config.iiif_url) ? s.config.iiif_url : lastIiifBase;
+
+      const ids = (s.data || []).map(d => d.id).join(",");
+      if (!ids) {
+        renderArtworks([]);
+        setLoading(false);
+        return;
+      }
+      // 2) Fetch details incl. image_id
+      const detailUrl = `${API_BASE}/artworks?ids=${ids}&fields=id,title,artist_title,image_id,date_display,medium_display,thumbnail`;
+      return fetch(detailUrl).then(r => r.json());
+    })
+    .then(d => {
+      if (!d) return; // handled above (no ids)
+      renderArtworks(d.data || []);
+    })
+    .catch(err => {
+      console.error(err);
+      $("#artContainer").html(`<div class="col-12 text-center text-danger">Error loading artworks.</div>`);
+    })
+    .finally(() => setLoading(false));
+}
+
+function showArtDetails(id) {
+  // Pull richer fields for the modal
+  const url = `${API_BASE}/artworks/${id}?fields=id,title,artist_title,image_id,date_display,medium_display,dimensions,place_of_origin,thumbnail,credit_line`;
+  fetch(url)
+    .then(r => r.json())
+    .then(res => {
+      const a = res.data || {};
+      const img = a.image_id
+        ? `${(res.config && res.config.iiif_url) ? res.config.iiif_url : lastIiifBase}/${a.image_id}/full/843,/0/default.jpg`
+        : `https://via.placeholder.com/800x600?text=${encodeURIComponent(a.title || "No Image")}`;
+      const alt = (a.thumbnail && a.thumbnail.alt_text) ? a.thumbnail.alt_text : "";
+      const websiteUrl = `https://www.artic.edu/artworks/${id}`;
+
+      const modalId = "artModal";
+      const modalHTML = `
+        <div class="modal fade" id="${modalId}" tabindex="-1" aria-hidden="true">
+          <div class="modal-dialog modal-lg modal-dialog-scrollable">
+            <div class="modal-content">
+              <div class="modal-header">
+                <h5 class="modal-title">${a.title || "Untitled"}</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+              </div>
+              <div class="modal-body">
+                <img src="${img}" class="img-fluid rounded mb-3" alt="${alt || a.title || "Artwork"}">
+                <p class="mb-1"><strong>Artist:</strong> ${a.artist_title || "Unknown"}</p>
+                <p class="mb-1"><strong>Date:</strong> ${a.date_display || "N/A"}</p>
+                <p class="mb-1"><strong>Medium:</strong> ${a.medium_display || "N/A"}</p>
+                <p class="mb-1"><strong>Dimensions:</strong> ${a.dimensions || "N/A"}</p>
+                <p class="mb-1"><strong>Origin:</strong> ${a.place_of_origin || "N/A"}</p>
+                ${alt ? `<p class="mt-2 small text-muted">${alt}</p>` : ""}
+              </div>
+              <div class="modal-footer">
+                <a href="${websiteUrl}" target="_blank" class="btn btn-primary">Open on AIC Website</a>
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+              </div>
+            </div>
+          </div>
+        </div>`;
+      // Mount and show
+      $("body").append(modalHTML);
+      const modal = new bootstrap.Modal(document.getElementById(modalId));
+      modal.show();
+      $(`#${modalId}`).on("hidden.bs.modal", () => $(`#${modalId}`).remove());
+    })
+    .catch(err => console.error(err));
+}
+
+// Events
+$(document).ready(function () {
+  // initial results
+  $("#txtSearch").val(lastQuery);
+  searchArtworks(lastQuery, currentPage);
+
+  $("#btnSearch").on("click", function () {
+    const q = $("#txtSearch").val().trim();
+    if (!q) return;
+    lastQuery = q;
+    currentPage = 1;
+    searchArtworks(lastQuery, currentPage);
+  });
+
+  $("#txtSearch").on("keypress", function (e) {
+    if (e.key === "Enter") $("#btnSearch").click();
+  });
+
+  $("#btnPrev").on("click", function () {
+    if (currentPage > 1) {
+      currentPage--;
+      searchArtworks(lastQuery, currentPage);
+    }
+  });
+
+  $("#btnNext").on("click", function () {
+    if (currentPage < lastTotalPages) {
+      currentPage++;
+      searchArtworks(lastQuery, currentPage);
+    }
+  });
+});
+</script>
+</body>
+</html>

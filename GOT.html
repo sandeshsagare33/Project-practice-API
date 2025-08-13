@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Game of Thrones Characters</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+  <style>
+    body { background:#f8f9fa; padding-top: 1.5rem; }
+    .character-card { min-height: 200px; }
+    .spinner { display:none; }
+    .mode-hint { font-size:.85rem; color:#6c757d; }
+  </style>
+</head>
+<body>
+<div class="container">
+  <h1 class="text-center mb-4">🗡 Game of Thrones Characters</h1>
+
+  <!-- Controls -->
+  <div class="row g-2 mb-2 align-items-center">
+    <div class="col-sm-6 col-lg-5">
+      <input type="text" id="txtSearch" class="form-control" placeholder="Search (e.g., Jon, Arya, Snow)">
+    </div>
+    <div class="col-auto">
+      <button id="btnSearch" class="btn btn-primary">Search</button>
+    </div>
+    <div class="col-auto">
+      <div class="btn-group" role="group" aria-label="Search mode">
+        <input type="radio" class="btn-check" name="mode" id="modeContains" autocomplete="off" checked>
+        <label class="btn btn-outline-secondary" for="modeContains" title="Finds partial matches (client-side filter)">Contains</label>
+
+        <input type="radio" class="btn-check" name="mode" id="modeExact" autocomplete="off">
+        <label class="btn btn-outline-secondary" for="modeExact" title="Fast API filter, requires exact full name">Exact</label>
+      </div>
+    </div>
+    <div class="col-auto spinner" id="loading">
+      <div class="spinner-border" role="status" aria-hidden="true"></div>
+    </div>
+  </div>
+  <div class="mode-hint mb-3">
+    Tip: <em>Contains</em> matches part of a name or any alias (e.g., “jon” finds “Jon Snow”). <em>Exact</em> must match the full name exactly.
+  </div>
+
+  <!-- Results -->
+  <div id="charContainer" class="row g-3"></div>
+
+  <!-- Pagination -->
+  <div class="d-flex justify-content-center mt-4 gap-2">
+    <button id="btnPrev" class="btn btn-outline-secondary" disabled>Prev</button>
+    <span id="pageInfo" class="align-self-center small text-muted"></span>
+    <button id="btnNext" class="btn btn-outline-secondary" disabled>Next</button>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<script>
+const API_BASE = "https://anapioficeandfire.com/api/characters";
+const SERVER_PAGE_SIZE = 50;    // When scanning API pages
+const UI_PAGE_SIZE = 12;        // Cards per page in UI
+const MAX_SCAN_PAGES = 30;      // Safety cap (30*50 = 1500 rows max per search scan)
+
+let currentPage = 1;            // UI page (not API page)
+let lastQuery = "";
+let lastMode = "contains";      // "contains" | "exact"
+let hasNext = false;
+
+// UI helpers
+function setLoading(on) { $("#loading").css("display", on ? "inline-block" : "none"); }
+function updatePager(state) {
+  $("#btnPrev").prop("disabled", state.page <= 1);
+  $("#btnNext").prop("disabled", !state.hasNext);
+  $("#pageInfo").text(`Page ${state.page}${state.total ? " of " + state.total : ""}`);
+}
+function safeJoin(arr) {
+  return (arr || []).filter(x => x && x.trim()).join(", ") || "None";
+}
+
+// Render cards
+function renderCharacters(chars) {
+  const $c = $("#charContainer").empty();
+  if (!chars.length) {
+    $c.append(`<div class="col-12 text-center text-danger">No characters found.</div>`);
+    return;
+  }
+  chars.forEach(c => {
+    const name = c.name || (c.aliases && c.aliases.find(a => a && a.trim())) || "Unknown";
+    const culture = c.culture || "Unknown";
+    const gender = c.gender || "Unknown";
+    $c.append(`
+      <div class="col-sm-6 col-md-4 col-lg-3">
+        <div class="card character-card h-100 shadow-sm">
+          <div class="card-body">
+            <h6 class="card-title">${name}</h6>
+            <p class="text-muted small mb-1"><strong>Culture:</strong> ${culture}</p>
+            <p class="text-muted small mb-1"><strong>Gender:</strong> ${gender}</p>
+            <button class="btn btn-sm btn-outline-primary mt-2" onclick="showCharacterDetails('${c.url}')">
+              View Details
+            </button>
+          </div>
+        </div>
+      </div>
+    `);
+  });
+}
+
+// Exact search (fast, exact match)
+function searchExact(query) {
+  const url = `${API_BASE}?name=${encodeURIComponent(query)}&page=1&pageSize=${SERVER_PAGE_SIZE}`;
+  return fetch(url).then(r => r.json()).then(list => {
+    // Just one "page" of results; paginate client side
+    const start = (currentPage - 1) * UI_PAGE_SIZE;
+    const slice = list.slice(start, start + UI_PAGE_SIZE);
+    hasNext = start + UI_PAGE_SIZE < list.length;
+    updatePager({ page: currentPage, hasNext, total: Math.ceil(list.length / UI_PAGE_SIZE) || 1 });
+    renderCharacters(slice);
+  });
+}
+
+// Contains search (partial; scans API pages and filters client-side by name/aliases)
+function searchContains(query) {
+  const q = query.toLowerCase();
+  const offset = (currentPage - 1) * UI_PAGE_SIZE;
+  const targetCount = offset + UI_PAGE_SIZE + 1; // fetch enough to know if there's a next page
+
+  let matches = [];
+  let apiPage = 1;
+
+  function loop() {
+    const url = `${API_BASE}?page=${apiPage}&pageSize=${SERVER_PAGE_SIZE}`;
+    return fetch(url).then(r => r.json()).then(arr => {
+      if (!arr.length) return true; // done: no more pages
+      // collect matches from this API page
+      arr.forEach(c => {
+        const name = (c.name || "").toLowerCase();
+        const aliasStr = (c.aliases || []).join(" ").toLowerCase();
+        if (name.includes(q) || aliasStr.includes(q)) matches.push(c);
+      });
+
+      const done = matches.length >= targetCount || arr.length < SERVER_PAGE_SIZE || apiPage >= MAX_SCAN_PAGES;
+      if (done) return true;
+      apiPage++;
+      return loop();
+    });
+  }
+
+  return loop().then(() => {
+    const pageItems = matches.slice(offset, offset + UI_PAGE_SIZE);
+    hasNext = matches.length > offset + UI_PAGE_SIZE;
+    updatePager({ page: currentPage, hasNext });
+    renderCharacters(pageItems);
+  });
+}
+
+// Fetch page without search
+function fetchCharactersPage(page = 1) {
+  const url = `${API_BASE}?page=${page}&pageSize=${UI_PAGE_SIZE}`;
+  return fetch(url).then(r => r.json()).then(list => {
+    hasNext = list.length === UI_PAGE_SIZE;
+    updatePager({ page, hasNext });
+    renderCharacters(list);
+  });
+}
+
+// Details modal
+function showCharacterDetails(url) {
+  fetch(url).then(r => r.json()).then(c => {
+    const name = c.name || (c.aliases && c.aliases.find(a => a && a.trim())) || "Unknown";
+    const modalId = "charModal";
+
+    // Resolve first few houses (allegiances) names
+    const housePromises = (c.allegiances || []).slice(0, 5).map(h =>
+      fetch(h).then(r => r.json()).then(house => house.name).catch(() => null)
+    );
+    // Resolve a couple of books for flavor
+    const bookPromises = (c.books || []).slice(0, 3).map(b =>
+      fetch(b).then(r => r.json()).then(book => book.name).catch(() => null)
+    );
+
+    Promise.all([Promise.all(housePromises), Promise.all(bookPromises)]).then(([houses, books]) => {
+      const modalHTML = `
+        <div class="modal fade" id="${modalId}" tabindex="-1" aria-hidden="true">
+          <div class="modal-dialog modal-lg modal-dialog-scrollable">
+            <div class="modal-content">
+              <div class="modal-header">
+                <h5 class="modal-title">${name}</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+              </div>
+              <div class="modal-body">
+                <p><strong>Gender:</strong> ${c.gender || "Unknown"}</p>
+                <p><strong>Culture:</strong> ${c.culture || "Unknown"}</p>
+                <p><strong>Born:</strong> ${c.born || "Unknown"}</p>
+                <p><strong>Died:</strong> ${c.died || "Unknown"}</p>
+                <p><strong>Titles:</strong> ${safeJoin(c.titles)}</p>
+                <p><strong>Aliases:</strong> ${safeJoin(c.aliases)}</p>
+                <p><strong>Allegiances:</strong> ${safeJoin(houses)}</p>
+                <p><strong>Appears in:</strong> ${safeJoin(books)}</p>
+                <p class="small text-muted">POV Books: ${c.povBooks ? c.povBooks.length : 0}</p>
+              </div>
+              <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+              </div>
+            </div>
+          </div>
+        </div>`;
+      $("body").append(modalHTML);
+      const modal = new bootstrap.Modal(document.getElementById(modalId));
+      modal.show();
+      $(`#${modalId}`).on("hidden.bs.modal", () => $(`#${modalId}`).remove());
+    });
+  });
+}
+window.showCharacterDetails = showCharacterDetails; // expose for onclick
+
+// Orchestrator
+function runSearch() {
+  const query = $("#txtSearch").val().trim();
+  lastQuery = query;
+  lastMode = $("#modeExact").is(":checked") ? "exact" : "contains";
+  currentPage = 1;
+
+  setLoading(true);
+  const op = query
+    ? (lastMode === "exact" ? searchExact(query) : searchContains(query))
+    : fetchCharactersPage(currentPage);
+
+  op.finally(() => setLoading(false));
+}
+
+$(document).ready(function () {
+  // Initial load (first page)
+  fetchCharactersPage(currentPage);
+
+  $("#btnSearch").on("click", runSearch);
+  $("#txtSearch").on("keypress", function (e) {
+    if (e.key === "Enter") runSearch();
+  });
+  $("#modeContains, #modeExact").on("change", runSearch);
+
+  $("#btnPrev").on("click", function () {
+    if (currentPage > 1) {
+      currentPage--;
+      setLoading(true);
+      const op = lastQuery
+        ? (lastMode === "exact" ? searchExact(lastQuery) : searchContains(lastQuery))
+        : fetchCharactersPage(currentPage);
+      op.finally(() => setLoading(false));
+    }
+  });
+
+  $("#btnNext").on("click", function () {
+    if (hasNext) {
+      currentPage++;
+      setLoading(true);
+      const op = lastQuery
+        ? (lastMode === "exact" ? searchExact(lastQuery) : searchContains(lastQuery))
+        : fetchCharactersPage(currentPage);
+      op.finally(() => setLoading(false));
+    }
+  });
+});
+</script>
+</body>
+</html>

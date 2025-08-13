@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>City → Geo & Time Details</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+  <style>
+    body{background:#f8f9fa;padding:20px}
+    .card-json { max-height: 320px; overflow:auto; font-family: monospace; font-size: 13px; background:#0b1220; color:#e6eef6; padding:10px; border-radius:6px;}
+    .small-muted { font-size: .85rem; color:#6c757d; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h2 class="text-center mb-4">🔎 City → Coordinates, Timezone & Country Info</h2>
+
+    <div class="row g-2 mb-3">
+      <div class="col-md-8">
+        <input id="cityInput" class="form-control" placeholder="Type city name (e.g. Mumbai, London, New York)" />
+      </div>
+      <div class="col-md-2">
+        <select id="limitSelect" class="form-select" title="Result preference">
+          <option value="1">Top 1 result</option>
+          <option value="3">Top 3 results</option>
+        </select>
+      </div>
+      <div class="col-md-2 d-grid">
+        <button id="searchBtn" class="btn btn-primary">Search</button>
+      </div>
+    </div>
+
+    <div id="alerts"></div>
+
+    <div id="resultsArea" style="display:none;">
+      <div class="row gy-3">
+        <div class="col-lg-6">
+          <div id="cards" class="row g-3"></div>
+        </div>
+
+        <div class="col-lg-6">
+          <h6>Raw API responses (for debugging)</h6>
+          <div class="mb-2">
+            <div class="small-muted">Nominatim (geocoding)</div>
+            <pre id="nominatimRaw" class="card-json">—</pre>
+          </div>
+          <div class="mb-2">
+            <div class="small-muted">IPGeolocation: Timezone</div>
+            <pre id="tzRaw" class="card-json">—</pre>
+          </div>
+          <div class="mb-2">
+            <div class="small-muted">IPGeolocation: Astronomy</div>
+            <pre id="astroRaw" class="card-json">—</pre>
+          </div>
+          <div class="mb-2">
+            <div class="small-muted">RestCountries (country info)</div>
+            <pre id="countryRaw" class="card-json">—</pre>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div id="loader" class="text-center mt-4" style="display:none;">
+      <div class="spinner-border text-primary" role="status"></div>
+      <div class="small-muted mt-2">Fetching data — one moment...</div>
+    </div>
+
+    <div class="text-center mt-4 text-muted small">
+      Note: this demo uses Nominatim (OpenStreetMap) for geocoding, ipgeolocation.io for timezone/astronomy, and restcountries.com for country data.
+      If ipgeolocation calls fail with CORS or 4xx/5xx responses, consider using a server-side proxy or enabling Request Origin in your ipgeolocation dashboard.
+    </div>
+  </div>
+
+<script>
+  // === CONFIG ===
+  const IPGEO_KEY = "1b81080b5a694ff5843057e1c91afa9b"; // <- your ipgeolocation key (you provided this)
+  // =================
+
+  function showAlert(type, html) {
+    $("#alerts").html(`<div class="alert alert-${type} alert-dismissible fade show" role="alert">
+      ${html}
+      <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+    </div>`);
+  }
+
+  function clearAlerts(){ $("#alerts").empty(); }
+
+  function setLoading(on){
+    if(on){ $("#loader").show(); $("#searchBtn").prop("disabled", true); $("#resultsArea").hide(); }
+    else { $("#loader").hide(); $("#searchBtn").prop("disabled", false); $("#resultsArea").show(); }
+  }
+
+  // Nominatim geocode (no API key) — returns array of matches
+  function geocodeCity(city, limit=1){
+    const url = `https://nominatim.openstreetmap.org/search?format=json&addressdetails=1&limit=${limit}&q=${encodeURIComponent(city)}`;
+    return $.ajax({
+      url,
+      method: "GET",
+      dataType: "json",
+      // polite: include a referrer or email in the "Accept-Language" or "email" param is discouraged in browser,
+      // but we keep default—Nominatim is okay for light testing.
+    });
+  }
+
+  // ipgeolocation timezone endpoint by coords
+  function ipgeoTimezone(lat, lon){
+    const url = `https://api.ipgeolocation.io/timezone?apiKey=${IPGEO_KEY}&lat=${encodeURIComponent(lat)}&long=${encodeURIComponent(lon)}`;
+    return $.ajax({ url, method: "GET", dataType: "json" });
+  }
+
+  // ipgeolocation astronomy endpoint by coords
+  function ipgeoAstronomy(lat, lon){
+    const url = `https://api.ipgeolocation.io/astronomy?apiKey=${IPGEO_KEY}&lat=${encodeURIComponent(lat)}&long=${encodeURIComponent(lon)}`;
+    return $.ajax({ url, method: "GET", dataType: "json" });
+  }
+
+  // RestCountries by alpha2 code
+  function restCountryInfo(alpha2){
+    // restcountries accepts alpha2 case-insensitive
+    const code = (alpha2 || "").toLowerCase();
+    return $.ajax({
+      url: `https://restcountries.com/v3.1/alpha/${encodeURIComponent(code)}`,
+      method: "GET",
+      dataType: "json"
+    });
+  }
+
+  // Render one card for a single geocode result
+  function renderCard(itemIndex, nom, tz, astro, countryData){
+    // nom: Nominatim item
+    // tz: timezone response object or null
+    // astro: astronomy response or null
+    // countryData: restcountries response array or null
+
+    const lat = nom.lat, lon = nom.lon;
+    const displayName = nom.display_name;
+    const address = nom.address || {};
+    const cityLabel = address.city || address.town || address.village || address.hamlet || address.county || "";
+    const state = address.state || address.region || "";
+    const countryCode = (address.country_code || "").toUpperCase();
+    const countryName = address.country || (countryData && countryData[0] && countryData[0].name && countryData[0].name.common) || "";
+
+    // Country details from restcountries
+    let currencyStr = "N/A", languagesStr = "N/A", flagUrl = "", region = "";
+    if(countryData && countryData[0]){
+      const c = countryData[0];
+      region = c.region || "";
+      if(c.flags && (c.flags.svg || c.flags.png)) flagUrl = c.flags.svg || c.flags.png;
+      const langs = c.languages ? Object.values(c.languages) : [];
+      languagesStr = langs.length ? langs.join(", ") : "N/A";
+      const currencies = c.currencies ? Object.entries(c.currencies).map(([code, obj]) => `${code} (${obj.name}${obj.symbol? ' - ' + obj.symbol: ''})`) : [];
+      currencyStr = currencies.length ? currencies.join(", ") : "N/A";
+    }
+
+    // Timezone display
+    let timezoneHTML = `<div class="small-muted">Timezone data not available</div>`;
+    if(tz){
+      // ipgeolocation timezone response structure can vary; check fields gracefully
+      const tzObj = tz.time_zone || tz.timezone || tz;
+      // tzObj may have name / current_time etc
+      const tzName = tzObj.name || tzObj.zone_name || tzObj.timezone || tzObj.time_zone || "";
+      const currentTime = tzObj.current_time || tzObj.current_time_unix ? (tzObj.current_time || new Date(tzObj.current_time_unix*1000).toLocaleString()) : (tz.date_time || tz.date_time_txt || tz.datetime || "");
+      const offset = tzObj.offset_with_dst !== undefined ? tzObj.offset_with_dst : (tzObj.offset || "");
+      timezoneHTML = `
+        <div><strong>${tzName || "Timezone"}</strong></div>
+        <div>Local time: ${currentTime || "N/A"}</div>
+        <div>UTC offset: ${offset}</div>
+      `;
+    }
+
+    // Astronomy
+    let astroHTML = `<div class="small-muted">Astronomy data not available</div>`;
+    if(astro && astro.sunrise){
+      astroHTML = `
+        <div>Sunrise: ${astro.sunrise || "N/A"}</div>
+        <div>Sunset: ${astro.sunset || "N/A"}</div>
+        <div>Moonrise: ${astro.moonrise || "N/A"}</div>
+        <div>Moonset: ${astro.moonset || "N/A"}</div>
+      `;
+    }
+
+    const cardHtml = `
+      <div class="card">
+        <div class="card-body">
+          <h5 class="card-title mb-1">${cityLabel || displayName}</h5>
+          <p class="text-muted mb-2">${displayName}</p>
+          <div class="row">
+            <div class="col-6">
+              <p class="mb-1"><strong>Coordinates</strong><br>${lat}, ${lon}</p>
+              <p class="mb-1"><strong>Country</strong><br>${countryName} (${countryCode})</p>
+              <p class="mb-1"><strong>State/Region</strong><br>${state || "N/A"}</p>
+              <p class="mb-1"><strong>Region</strong><br>${region || "N/A"}</p>
+            </div>
+            <div class="col-6">
+              <p class="mb-1"><strong>Timezone</strong><br>${timezoneHTML}</p>
+              <p class="mb-1"><strong>Sun / Moon</strong><br>${astroHTML}</p>
+            </div>
+          </div>
+
+          <div class="d-flex align-items-center mt-2">
+            ${flagUrl ? `<img src="${flagUrl}" alt="flag" style="height:36px;margin-right:10px;border-radius:4px">` : ""}
+            <div>
+              <div><strong>Languages:</strong> ${languagesStr}</div>
+              <div><strong>Currency:</strong> ${currencyStr}</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+    return cardHtml;
+  }
+
+  // Main search handler
+  $(document).ready(function(){
+    $("#searchBtn").on("click", runSearch);
+    $("#cityInput").on("keypress", function(e){ if(e.key === "Enter") runSearch(); });
+  });
+
+  function runSearch(){
+    clearAlerts();
+    const city = $("#cityInput").val().trim();
+    if(!city){ showAlert("warning","Please enter a city name."); return; }
+    const limit = parseInt($("#limitSelect").val(), 10) || 1;
+
+    setLoading(true);
+    $("#cards").empty();
+    $("#nominatimRaw").text("—");
+    $("#tzRaw").text("—");
+    $("#astroRaw").text("—");
+    $("#countryRaw").text("—");
+
+    geocodeCity(city, limit)
+      .done(function(nominatimResults){
+        $("#nominatimRaw").text(JSON.stringify(nominatimResults, null, 2));
+        if(!Array.isArray(nominatimResults) || nominatimResults.length === 0){
+          setLoading(false);
+          showAlert("danger", "City not found by geocoding (Nominatim). Try a different name or spelling.");
+          return;
+        }
+
+        // For each returned result, fetch timezone, astronomy, country info in parallel
+        const promises = nominatimResults.map((nomItem) => {
+          const lat = nomItem.lat, lon = nomItem.lon;
+          const country_code = (nomItem.address && nomItem.address.country_code) ? nomItem.address.country_code.toUpperCase() : "";
+          const tzP = ipgeoTimezone(lat, lon).done(function(t){ $("#tzRaw").text((prev=>{ try{ const combined = prev && prev!=="—" ? JSON.stringify(JSON.parse(prev),null,2) + "\n\n" + JSON.stringify(t,null,2) : JSON.stringify(t,null,2); return combined; }catch(e){ return JSON.stringify(t,null,2);} })( $("#tzRaw").text() ))}).fail(function(jq,x,y){
+            // show error message here if first fail
+            console.warn("Timezone API error", jq.status, x, y);
+          });
+          const astroP = ipgeoAstronomy(lat, lon).done(function(a){ $("#astroRaw").text((prev=>{ try{ const combined = prev && prev!=="—" ? JSON.stringify(JSON.parse(prev),null,2) + "\n\n" + JSON.stringify(a,null,2) : JSON.stringify(a,null,2); return combined; }catch(e){ return JSON.stringify(a,null,2);} })( $("#astroRaw").text() ))}).fail(function(jq,x,y){
+            console.warn("Astronomy API error", jq.status, x, y);
+          });
+          const countryP = country_code ? restCountryInfo(country_code).done(function(c){ $("#countryRaw").text((prev=>{ try{ const combined = prev && prev!=="—" ? prev + "\n\n" + JSON.stringify(c, null, 2) : JSON.stringify(c, null, 2); return combined; }catch(e){ return JSON.stringify(c,null,2);} })( $("#countryRaw").text() ))}).fail(function(jq,x,y){
+            console.warn("RestCountries error", jq.status, x, y);
+          }) : $.Deferred().resolve(null);
+
+          // Return a promise that resolves when all three (tz, astro, country) finish (or fail) — we use $.when
+          return $.when(tzP, astroP, countryP).then(function(tzRes, astroRes, countryRes){
+            // jQuery returns array-like arguments; extract direct objects if needed
+            const tzObj = tzRes && tzRes[0] ? tzRes[0] : (tzRes || null);
+            const astroObj = astroRes && astroRes[0] ? astroRes[0] : (astroRes || null);
+            const countryObj = countryRes && countryRes[0] ? countryRes[0] : (countryRes || null);
+            return { nom: nomItem, tz: tzObj, astro: astroObj, country: countryObj };
+          });
+        });
+
+        // Wait for all results
+        $.when.apply($, promises)
+          .done(function(){
+            // arguments will be the resolved values for each promise
+            const args = Array.from(arguments);
+            // If only one result, arguments is single object, otherwise it's list
+            const resultsList = (promises.length === 1) ? [args[0]] : args;
+            // Render cards
+            resultsList.forEach((r, idx) => {
+              const html = renderCard(idx, r.nom, r.tz, r.astro, r.country);
+              $("#cards").append(`<div class="col-12 mb-2">${html}</div>`);
+            });
+
+            setLoading(false);
+            $("#resultsArea").show();
+          })
+          .fail(function(){
+            setLoading(false);
+            showAlert("danger", "One or more API calls failed. Check raw JSON panels for details. If ipgeolocation returned a CORS or 4xx/5xx error, you may need to enable Request Origin in your ipgeolocation dashboard or use a server-side proxy.");
+          });
+
+      })
+      .fail(function(jq, textStatus, errorThrown){
+        setLoading(false);
+        console.error("Geocode error", jq, textStatus, errorThrown);
+        showAlert("danger", "Failed to geocode the city name. Nominatim may be blocked or unreachable. Try again or try a different city.");
+      });
+  }
+</script>
+
+<!-- Bootstrap JS (for alert dismissal) -->
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>
