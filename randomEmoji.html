@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Emoji Explorer</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+  <style>
+    body { padding-top: 2rem; }
+    .emoji-card { font-size: 3rem; }
+    .controls .form-select { max-width: 200px; }
+  </style>
+</head>
+<body>
+  
+  <div class="container">
+    <h1 class="text-center mb-4">Emoji Explorer</h1>
+    
+    <div class="row controls mb-4">
+      <div class="col-auto">
+        <button id="btnRandom" class="btn btn-primary">Random Emoji</button>
+      </div>
+      <div class="col-auto">
+        <select id="selCategory" class="form-select">
+          <option value="">-- Category --</option>
+        </select>
+      </div>
+      <div class="col-auto">
+        <select id="selGroup" class="form-select">
+          <option value="">-- Group --</option>
+        </select>
+      </div>
+      <div class="col-auto">
+        <input type="text" id="txtSearch" class="form-control" placeholder="Search emojis…">
+      </div>
+      <div class="col-auto">
+        <button id="btnSearch" class="btn btn-success">Search</button>
+      </div>
+    </div>
+    
+    <div id="emojiContainer" class="row g-3"></div>
+  </div>
+
+  <script>
+    const baseURL = "https://emojihub.yurace.pro/api";
+
+    // Utility to render emojis as cards
+    function renderEmojis(data) {
+      const container = $("#emojiContainer").empty();
+      if (!data || data.length === 0) {
+        container.append('<div class="col-12 text-center text-danger">No emojis found.</div>');
+        return;
+      }
+      data.forEach(e => {
+        container.append(`
+          <div class="col-6 col-md-4 col-lg-3">
+            <div class="card text-center p-3">
+              <div class="emoji-card">${e.htmlCode[0]}</div>
+              <div><strong>${e.name}</strong></div>
+              <div class="small">${e.category} / ${e.group}</div>
+              <a href="#" class="btn btn-sm btn-outline-secondary mt-2">${e.htmlCode[0]}</a>
+            </div>
+          </div>
+        `);
+      });
+    }
+
+    // Fetch categories and groups for selectors
+    function loadFilters() {
+      $.get(`${baseURL}/categories`, cats => {
+        cats.forEach(c => $("#selCategory").append(`<option value="${c}">${c}</option>`));
+      });
+      $.get(`${baseURL}/groups`, groups => {
+        groups.forEach(g => $("#selGroup").append(`<option value="${g}">${g}</option>`));
+      });
+    }
+
+    $(document).ready(function() {
+      loadFilters();
+
+      $("#btnRandom").click(() => {
+        $.get(`${baseURL}/random`, renderEmojis);
+      });
+
+      $("#selCategory").change(function() {
+        const cat = $(this).val();
+        if (cat) {
+          $.get(`${baseURL}/all/category/${encodeURIComponent(cat)}`, renderEmojis);
+        }
+      });
+
+      $("#selGroup").change(function() {
+        const grp = $(this).val();
+        if (grp) {
+          $.get(`${baseURL}/all/group/${encodeURIComponent(grp)}`, renderEmojis);
+        }
+      });
+
+      $("#btnSearch").click(() => {
+        const q = $("#txtSearch").val().trim();
+        if (q) {
+          $.get(`${baseURL}/search?q=${encodeURIComponent(q)}`, renderEmojis);
+        }
+      });
+    });
+  </script>
+
+</body>
+</html>

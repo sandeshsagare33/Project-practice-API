@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Random Dog Viewer</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+  <style>
+    body { background: #f8f9fa; }
+    .dog-img { max-width: 100%; border-radius: 10px; }
+  </style>
+</head>
+<body class="container py-4">
+
+  <h2 class="text-center mb-4">🐶 Random Dog Viewer</h2>
+
+  <div class="text-center mb-3">
+    <button id="loadDog" class="btn btn-primary">Get Random Dog</button>
+  </div>
+
+  <div class="card shadow-sm mx-auto" style="width: 24rem;">
+    <img id="dogImage" src="" class="card-img-top dog-img" alt="Random Dog">
+    <div class="card-body text-center">
+      <p class="text-muted">Click the button to see a random dog!</p>
+    </div>
+  </div>
+
+  <script>
+    function loadDogImage() {
+      $("#dogImage").attr("src", ""); // Clear old image
+      $.getJSON("https://api.thedogapi.com/v1/images/search", function(data) {
+        if (data && data.length > 0) {
+          $("#dogImage").attr("src", data[0].url);
+        }
+      }).fail(function() {
+        alert("Failed to load dog image.");
+      });
+    }
+
+    $(document).ready(function() {
+      $("#loadDog").on("click", loadDogImage);
+      loadDogImage(); // Load one on page load
+    });
+  </script>
+
+</body>
+</html>
