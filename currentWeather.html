@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Weather App</title>
+    <link rel="stylesheet" href="/node_modules/bootstrap/dist/css/bootstrap.min.css">
+    <link rel="stylesheet" href="/node_modules/bootstrap-icons/font/bootstrap-icons.css">
+    <script src="/node_modules/jquery/dist/jquery.min.js"></script>
+    <style>
+        h2 {
+            color: #ffc107;
+            padding: 20px;
+            text-align: center;
+        }
+        .table th {
+            width: 40%;
+        }
+    </style>
+</head>
+<body class="bg-dark text-light">
+
+    <h2>🌤 Current Weather</h2>
+    <div class="container py-3">
+        <div class="input-group mb-4">
+            <input type="text" id="txtCity" placeholder="Enter city name" class="form-control">
+            <button onclick="SearchClick()" class="btn btn-warning">
+                <i class="bi bi-search"></i> Search
+            </button>
+        </div>
+
+        <div class="card bg-secondary text-light shadow">
+            <div class="card-body">
+                <h4 id="lblCity" class="mb-3"></h4>
+                <table class="table table-dark table-hover table-bordered">
+                    <tbody>
+                        <tr>
+                            <th>Description</th>
+                            <td id="lblDesc"></td>
+                        </tr>
+                        <tr>
+                            <th>Temperature</th>
+                            <td id="lblTemp"></td>
+                        </tr>
+                        <tr>
+                            <th>Feels Like</th>
+                            <td id="lblFeels"></td>
+                        </tr>
+                        <tr>
+                            <th>Max Temperature</th>
+                            <td id="lblMaxTemp"></td>
+                        </tr>
+                        <tr>
+                            <th>Min Temperature</th>
+                            <td id="lblMinTemp"></td>
+                        </tr>
+                        <tr>
+                            <th>Pressure</th>
+                            <td id="lblPress"></td>
+                        </tr>
+                        <tr>
+                            <th>Humidity</th>
+                            <td id="lblHumid"></td>
+                        </tr>
+                        <tr>
+                            <th>Wind Speed</th>
+                            <td id="lblWind"></td>
+                        </tr>
+                        <tr>
+                            <th>Longitude</th>
+                            <td id="lblLong"></td>
+                        </tr>
+                        <tr>
+                            <th>Latitude</th>
+                            <td id="lblLat"></td>
+                        </tr>
+                        <tr>
+                            <th>Visibility</th>
+                            <td id="lblVisibility"></td>
+                        </tr>
+                        <tr>
+                            <th>Sunrise</th>
+                            <td id="lblSunrise"></td>
+                        </tr>
+                        <tr>
+                            <th>Sunset</th>
+                            <td id="lblSunset"></td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        var cityName = '';
+
+        function LoadWeatherData() {
+            var api_Key = "ebdb858326c3339a4ed185fd02a8310c"; // Replace with your API key
+            var url = `https://api.openweathermap.org/data/2.5/weather?q=${cityName}&appid=${api_Key}`;
+
+            fetch(url)
+                .then(response => response.json())
+                .then(data => {
+                    console.log(data);
+
+                    // Kelvin → Celsius
+                    let tempC = (data.main.temp - 273.15).toFixed(1);
+                    let feelsC = (data.main.feels_like - 273.15).toFixed(1);
+                    let maxC = (data.main.temp_max - 273.15).toFixed(1);
+                    let minC = (data.main.temp_min - 273.15).toFixed(1);
+
+                    // m/s → km/h
+                    let windKmph = (data.wind.speed * 3.6).toFixed(1);
+
+                    // Unix → Local time
+                    let sunriseTime = new Date(data.sys.sunrise * 1000).toLocaleTimeString();
+                    let sunsetTime = new Date(data.sys.sunset * 1000).toLocaleTimeString();
+
+                    document.getElementById("lblCity").innerHTML =
+                        `<strong>${data.name}, ${data.sys.country}</strong>`;
+                    document.getElementById("lblDesc").innerHTML =
+                        data.weather[0].description.toUpperCase();
+                    document.getElementById("lblTemp").innerHTML =
+                        `${tempC} °C`;
+                    document.getElementById("lblFeels").innerHTML =
+                        `${feelsC} °C`;
+                    document.getElementById("lblMaxTemp").innerHTML =
+                        `${maxC} °C`;
+                    document.getElementById("lblMinTemp").innerHTML =
+                        `${minC} °C`;
+                    document.getElementById("lblPress").innerHTML =
+                        `${data.main.pressure} hPa`;
+                    document.getElementById("lblHumid").innerHTML =
+                        `${data.main.humidity} %`;
+                    document.getElementById("lblWind").innerHTML =
+                        `${windKmph} km/h`;
+                    document.getElementById("lblLong").innerHTML =
+                        data.coord.lon;
+                    document.getElementById("lblLat").innerHTML =
+                        data.coord.lat;
+                    document.getElementById("lblVisibility").innerHTML =
+                        `${(data.visibility / 1000).toFixed(1)} km`;
+                    document.getElementById("lblSunrise").innerHTML =
+                        sunriseTime;
+                    document.getElementById("lblSunset").innerHTML =
+                        sunsetTime;
+                });
+        }
+
+        function SearchClick() {
+            cityName = document.getElementById("txtCity").value;
+            if (cityName.trim() !== "") {
+                LoadWeatherData();
+            }
+        }
+    </script>
+
+</body>
+</html>
